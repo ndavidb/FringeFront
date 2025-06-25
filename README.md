@@ -3,6 +3,18 @@
 ## Overview
 This Next.js application serves as the official website proposal for the Fringe Festival. It uses React with TypeScript, Mantine UI components, and follows the App Router structure.
 
+**Note:** Access to backend API is found at [Fringe Festival API](
+
+### Overview Cloud Design
+![Alt text](./fringe/public/images/demo/ArchitectureCloud.jpg)
+
+### Overview Demo
+#### Admin Panel
+![Alt text](./fringe/public/images/demo/AdminPanel.png)
+
+#### User/Customer Panel
+![Alt text](./fringe/public/images/demo/FringeShows.png)
+
 ## Tech Stack
 - **Next.js 14+**: React framework with App Router
 - **TypeScript**: For type safety
