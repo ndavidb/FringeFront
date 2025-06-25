@@ -1,0 +1,176 @@
+# azure-pipelines.yml
+# Build and deploy a Next.js application to Azure App Service
+
+trigger:
+- uat
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  appName: 'fringebooking'  # Main App Service name
+  resourceGroupName: 'fringe'
+  nodeVersion: '20.x'
+  azureServiceConnection: 'Azure subscription 1 (30134d0e-009c-46bf-bd43-2627ffabef98)'
+  slotName: 'uat'
+
+stages:
+- stage: Build
+  displayName: 'Build Next.js Application'
+  jobs:
+  - job: BuildJob
+    displayName: 'Build and Package'
+    steps:
+    - task: NodeTool@0
+      inputs:
+        versionSpec: '20.x'
+      displayName: 'Install Node.js'
+
+    - script: |
+        npm install
+      workingDirectory: fringe
+      displayName: 'Install dependencies'
+
+    - script: |
+        npm run lint
+      workingDirectory: fringe
+      displayName: 'Run linting'
+      continueOnError: true
+
+    - script: |
+        npm run build
+      workingDirectory: fringe
+      displayName: 'Build Next.js application'
+
+    # Create complete deployment package with node_modules included
+    - script: |
+        # Create deployment package directory
+        mkdir -p $(Build.ArtifactStagingDirectory)/app
+
+        # Full copy of the project with node_modules
+        cp -r .next $(Build.ArtifactStagingDirectory)/app/
+        cp -r public $(Build.ArtifactStagingDirectory)/app/
+        cp -r node_modules $(Build.ArtifactStagingDirectory)/app/
+        cp package.json $(Build.ArtifactStagingDirectory)/app/
+        cp package-lock.json $(Build.ArtifactStagingDirectory)/app/ || true
+        cp next.config.ts $(Build.ArtifactStagingDirectory)/app/ || true
+        
+        # Create simpler startup script that doesn't need to install dependencies
+        cat > $(Build.ArtifactStagingDirectory)/app/startup.sh << 'EOL'
+        #!/bin/bash
+        
+        # Log startup information
+        echo "Starting Next.js application in $(pwd)"
+        echo "NODE_ENV: $NODE_ENV"
+        echo "PORT: $PORT"
+        echo "Directory contents:"
+        ls -la
+        
+        # Set default port if not provided
+        export PORT=${PORT:-8080}
+        export NODE_ENV=production
+        
+        # Make next executable available in path
+        export PATH="$PATH:$(pwd)/node_modules/.bin"
+        
+        # Check if next is available
+        echo "Checking Next.js location:"
+        which next || echo "next command not found in PATH"
+        ls -la node_modules/.bin/ || echo "bin directory not found"
+        
+        # Start Next.js explicitly using the full path
+        echo "Starting Next.js application..."
+        node node_modules/next/dist/bin/next start
+        EOL
+        chmod +x $(Build.ArtifactStagingDirectory)/app/startup.sh
+        
+        # Create .deployment file
+        cat > $(Build.ArtifactStagingDirectory)/app/.deployment << 'EOL'
+        [config]
+        SCM_DO_BUILD_DURING_DEPLOYMENT=false
+        command = bash startup.sh
+        EOL
+      workingDirectory: fringe
+      displayName: 'Prepare deployment package'
+
+    # Archive the files for deployment
+    - task: ArchiveFiles@2
+      inputs:
+        rootFolderOrFile: '$(Build.ArtifactStagingDirectory)/app'
+        includeRootFolder: false
+        archiveType: 'zip'
+        archiveFile: '$(Build.ArtifactStagingDirectory)/app.zip'
+        replaceExistingArchive: true
+      displayName: 'Archive deployment package'
+
+    # Publish the artifacts
+    - task: PublishBuildArtifacts@1
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)/app.zip'
+        ArtifactName: 'drop'
+        publishLocation: 'Container'
+      displayName: 'Publish artifacts'
+
+- stage: Deploy
+  displayName: 'Deploy to uat Slot'
+  dependsOn: Build
+  jobs:
+  - deployment: DeployJob
+    displayName: 'Deploy to uat Slot'
+    environment: 'uat'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          # Download the artifact
+          - task: DownloadBuildArtifacts@0
+            inputs:
+              buildType: 'current'
+              downloadType: 'single'
+              artifactName: 'drop'
+              downloadPath: '$(System.ArtifactsDirectory)'
+
+          # Deploy to Azure App Service Slot
+          - task: AzureWebApp@1
+            inputs:
+              azureSubscription: '$(azureServiceConnection)'
+              appType: 'webAppLinux'
+              appName: '$(appName)'
+              deployToSlotOrASE: true
+              resourceGroupName: '$(resourceGroupName)'
+              slotName: '$(slotName)'
+              package: '$(System.ArtifactsDirectory)/drop/app.zip'
+              startUpCommand: 'bash startup.sh'
+            displayName: 'Deploy to uat Slot'
+
+          # Configure app settings for the slot
+          - task: AzureAppServiceSettings@1
+            inputs:
+              azureSubscription: '$(azureServiceConnection)'
+              appName: '$(appName)'
+              resourceGroupName: '$(resourceGroupName)'
+              slotName: '$(slotName)'
+              appSettings: |
+                [
+                  {
+                    "name": "NODE_ENV",
+                    "value": "production",
+                    "slotSetting": true
+                  },
+                  {
+                    "name": "SCM_DO_BUILD_DURING_DEPLOYMENT",
+                    "value": "false",
+                    "slotSetting": true
+                  },
+                  {
+                    "name": "WEBSITE_NODE_DEFAULT_VERSION",
+                    "value": "~20",
+                    "slotSetting": true
+                  },
+                  {
+                    "name": "NEXT_PUBLIC_BACKEND_API_URL",
+                    "value": "https://fringebackend-uat.azurewebsites.net",
+                    "slotSetting": true
+                  }
+                ]
+            displayName: 'Configure Slot Settings'

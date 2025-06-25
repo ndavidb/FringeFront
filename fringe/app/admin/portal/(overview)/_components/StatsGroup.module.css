@@ -1,0 +1,13 @@
+﻿.title {
+    text-transform: uppercase;
+    font-weight: 700;
+    font-size: var(--mantine-font-size-xs);
+    font-family: var(--mantine-font-family-headings), serif;
+    color: var(--mantine-color-dimmed);
+}
+
+.value {
+    font-size: 1.5rem; /* 24px */
+    font-weight: 700;
+    line-height: 1;
+}
